@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Agent Pet
+GenericName=Desktop Pet
+Comment=A floating desktop pet with a CLI you can fire from anywhere
+Exec=agent-pet
+Icon=agent-pet
+Terminal=false
+Categories=Utility;
+StartupNotify=false
+X-AppImage-Version=0.1.0
+

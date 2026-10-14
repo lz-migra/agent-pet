@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- Background circle -->
+  <circle cx="128" cy="128" r="120" fill="#1f2937"/>
+  <!-- Antenna -->
+  <line x1="128" y1="40" x2="128" y2="64" stroke="#9ca3af" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="128" cy="36" r="8" fill="#fbbf24"/>
+  <!-- Head body -->
+  <rect x="48" y="64" width="160" height="120" rx="32" fill="#374151"/>
+  <!-- Eyes -->
+  <ellipse cx="92" cy="124" rx="22" ry="20" fill="#0ea5e9"/>
+  <ellipse cx="164" cy="124" rx="22" ry="20" fill="#0ea5e9"/>
+  <!-- Smile -->
+  <path d="M 96 156 Q 128 180 160 156" stroke="#fbbf24" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <!-- Ears -->
+  <rect x="40" y="100" width="12" height="32" rx="6" fill="#1f2937"/>
+  <rect x="204" y="100" width="12" height="32" rx="6" fill="#1f2937"/>
+  <!-- Body / collar -->
+  <rect x="88" y="184" width="80" height="20" rx="6" fill="#4b5563"/>
+</svg>

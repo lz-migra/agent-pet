@@ -1,0 +1,73 @@
+{
+  "name": "agent-pet",
+  "version": "0.1.0",
+  "description": "A desktop pet wrapper around agent-robot-avatar with a CLI you can fire from anywhere.",
+  "main": "src/main/main.js",
+  "scripts": {
+    "dev": "electron .",
+    "start": "electron .",
+    "test": "node test/smoke.js",
+    "dist": "electron-builder",
+    "stage:linux": "electron-builder --linux dir && node scripts/prepare-appdir.js linux",
+    "pack:linux": "node scripts/pack-appdir.js",
+    "dist:linux": "npm run stage:linux && npm run pack:linux",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "postinstall": "electron-builder install-app-deps || true"
+  },
+  "keywords": [
+    "electron",
+    "desktop-pet",
+    "agent-robot-avatar",
+    "cli"
+  ],
+  "license": "MIT",
+  "bin": {
+    "agent-pet": "./bin/agent-pet"
+  },
+  "dependencies": {
+    "agent-robot-avatar": "^0.5.2"
+  },
+  "devDependencies": {
+    "electron": "^32.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.cxartlab.agentpet",
+    "productName": "Agent Pet",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "extraResources": [
+      {
+        "from": "bin",
+        "to": "bin"
+      }
+    ],
+    "linux": {
+      "target": [
+        "dir"
+      ],
+      "category": "Utility",
+      "executableName": "agent-pet-gui"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.utilities",
+      "executableName": "agent-pet"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "executableName": "agent-pet"
+    }
+  }
+}

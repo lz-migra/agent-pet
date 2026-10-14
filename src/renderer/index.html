@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Agent Pet</title>
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;" />
+    <style>
+      :root {
+        --pet-size: 240px;
+        --pet-color: #08090b;
+        --bottom-padding: 8px;
+      }
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100vw;
+        height: 100vh;
+        /* transparent surfaces for frameless+transparent windows */
+        background: transparent !important;
+        background-color: rgba(0, 0, 0, 0) !important;
+        overflow: hidden;
+        -webkit-user-select: none;
+        user-select: none;
+        cursor: grab;
+      }
+      body.dragging { cursor: grabbing; }
+      #stage {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: end center;
+        padding-bottom: var(--bottom-padding);
+        background: transparent !important;
+      }
+      agent-robot-avatar {
+        width: var(--pet-size);
+        height: var(--pet-size);
+        --avatar-color: var(--pet-color);
+      }
+      /* If the avatar is still loading, show a faint placeholder so the
+         window is visible while we wait. */
+      #stage:empty::before {
+        content: "";
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        background: rgba(128, 128, 128, 0.25);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="stage"></div>
+    <!-- The avatar is vendored under ./vendor so it can be loaded with a
+         relative path (Electron's loadFile + asar doesn't resolve bare
+         module specifiers from node_modules). -->
+    <script type="module" src="./vendor/agent-robot-avatar.js"></script>
+    <script type="module" src="./renderer.js"></script>
+  </body>
+</html>

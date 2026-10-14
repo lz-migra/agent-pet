@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Dual-mode entrypoint for the AppImage / dev build.
+set -e
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+LOGDIR="${XDG_CONFIG_HOME:-$HOME/.config}/agent-pet"
+mkdir -p "$LOGDIR"
+TRACE="$LOGDIR/apprun.log"
+echo "=== $(date -Iseconds) \$0=$0 args=$* HERE=$HERE" >>"$TRACE"
+
+GUI="$HERE/resources/gui/agent-pet-gui"
+DISPATCHER="$HERE/agent-pet.js"
+
+FIRST="${1:-}"
+CLI_CMDS="init install play react reset list status show hide quit debug-hitbox devtools set-idle"
+
+is_known_cli() {
+  case "$1" in
+    --help|--usage|--version|-h|-V)
+      return 0 ;;
+  esac
+  for c in $CLI_CMDS; do
+    [ "$1" = "$c" ] && return 0
+  done
+  return 1
+}
+
+if [ -n "$FIRST" ] && is_known_cli "$FIRST"; then
+  echo "MODE=cli FIRST=$FIRST" >>"$TRACE"
+  if [ -x "$GUI" ]; then
+    echo "EXEC: ELECTRON_RUN_AS_NODE=1 $GUI $DISPATCHER $*" >>"$TRACE"
+    exec env ELECTRON_RUN_AS_NODE=1 "$GUI" "$DISPATCHER" "$@"
+  fi
+  if command -v node >/dev/null 2>&1; then
+    exec node "$DISPATCHER" "$@"
+  fi
+  echo "FATAL: no Node available" >>"$TRACE"
+  exit 1
+fi
+
+echo "MODE=gui" >>"$TRACE"
+if [ -x "$GUI" ]; then
+  EXTRA="${AGENT_PET_EXTRA_ARGS:-}"
+  echo "EXEC: $GUI $* $EXTRA" >>"$TRACE"
+  # shellcheck disable=SC2086
+  exec "$GUI" "$@" $EXTRA
+fi
+echo "FATAL: no GUI binary" >>"$TRACE"
+exec npx --no-install electron "$HERE" "$@"
