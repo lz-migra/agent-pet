@@ -96,7 +96,7 @@ avatar.addEventListener('action-state', (event) => {
 // avatar's own gestures (head squeeze, antenna drag, click reactions) still
 // work. The position is driven from the renderer via screenX/screenY, which is
 // also what makes it work under Wayland, where the global pointer is frozen.
-const DRAG_THRESHOLD_PX = 4;
+const DRAG_THRESHOLD_PX = 10;
 let dragState = null; // { pointerId, startScreenX, startScreenY, startWinX, startWinY, active }
 
 function dragSupported() {
@@ -110,23 +110,32 @@ window.addEventListener('pointerdown', (event) => {
   if (event.button !== 0) return;                        // left button only
   if (event.pointerType && event.pointerType !== 'mouse') return;
   if (!dragSupported()) return;
-  const b = window.pet.getWindowBounds();
   dragState = {
     pointerId: event.pointerId,
+    // Origin of the gesture; the window position is read once the threshold is
+    // crossed (see pointermove) so the window does not jump when it starts.
     startScreenX: event.screenX,
     startScreenY: event.screenY,
-    startWinX: b.x,
-    startWinY: b.y,
+    startWinX: 0,
+    startWinY: 0,
     active: false
   };
 }, { capture: true });
 
 window.addEventListener('pointermove', (event) => {
   if (!dragState || event.pointerId !== dragState.pointerId) return;
-  const dx = event.screenX - dragState.startScreenX;
-  const dy = event.screenY - dragState.startScreenY;
   if (!dragState.active) {
-    if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+    const ax = event.screenX - dragState.startScreenX;
+    const ay = event.screenY - dragState.startScreenY;
+    if (Math.hypot(ax, ay) < DRAG_THRESHOLD_PX) return;
+    // Threshold crossed: this is a window drag, not a click. Rebase the origin
+    // on the window's current position and the pointer, so the window follows
+    // from here without a jump of the threshold distance.
+    const b = window.pet.getWindowBounds();
+    dragState.startWinX = b.x;
+    dragState.startWinY = b.y;
+    dragState.startScreenX = event.screenX;
+    dragState.startScreenY = event.screenY;
     dragState.active = true;
     // Take over the pointer and cancel the avatar's head drag so the two do not
     // fight, and so releasing does not fire a drag reaction.
@@ -134,10 +143,11 @@ window.addEventListener('pointermove', (event) => {
     try { document.body.setPointerCapture(event.pointerId); } catch (_) {}
     document.body.classList.add('dragging');
     if (window.pet.setDragging) window.pet.setDragging(true);
+    return;
   }
   window.pet.moveTo(
-    Math.round(dragState.startWinX + dx),
-    Math.round(dragState.startWinY + dy)
+    Math.round(dragState.startWinX + (event.screenX - dragState.startScreenX)),
+    Math.round(dragState.startWinY + (event.screenY - dragState.startScreenY))
   );
 }, { capture: true });
 
