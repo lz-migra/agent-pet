@@ -63,5 +63,27 @@ contextBridge.exposeInMainWorld('pet', {
   },
 
   // Toggle hitbox visual debug
-  debugHitbox: (on) => ipcRenderer.invoke('pet:invoke', { cmd: 'debug-hitbox', args: [on ? 'on' : 'off'] })
+  debugHitbox: (on) => ipcRenderer.invoke('pet:invoke', { cmd: 'debug-hitbox', args: [on ? 'on' : 'off'] }),
+
+  /**
+   * Move the window to absolute screen coordinates. Used by the drag gesture,
+   * which is driven from the renderer so it works on every platform.
+   * @param {number} x
+   * @param {number} y
+   */
+  moveTo: (x, y) => ipcRenderer.send('pet:move', { x, y }),
+
+  /**
+   * Mark a window drag as started/ended. While dragging, the main process
+   * keeps the window interactive instead of switching to click-through.
+   * @param {boolean} on
+   */
+  setDragging: (on) => ipcRenderer.send('pet:dragging', !!on),
+
+  /**
+   * Current window bounds in screen coordinates. Synchronous on purpose: the
+   * drag reads it at pointerdown to compute the grab offset without a race.
+   * @returns {{x:number, y:number, width:number, height:number}}
+   */
+  getWindowBounds: () => ipcRenderer.sendSync('pet:window-bounds')
 });

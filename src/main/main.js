@@ -200,6 +200,26 @@ function clampToDisplay(bounds) {
   };
 }
 
+/**
+ * If the window ended up completely outside every display (dropped off the
+ * edge during a drag), bring it back to the centre of the primary display so it
+ * cannot be lost.
+ */
+function ensureOnScreen(win) {
+  const b = win.getBounds();
+  const visible = screen.getAllDisplays().some((d) => {
+    const a = d.workArea;
+    return b.x < a.x + a.width && b.x + b.width > a.x &&
+           b.y < a.y + a.height && b.y + b.height > a.y;
+  });
+  if (visible) return;
+  const primary = screen.getPrimaryDisplay().workArea;
+  win.setPosition(
+    Math.round(primary.x + (primary.width - b.width) / 2),
+    Math.round(primary.y + (primary.height - b.height) / 2)
+  );
+}
+
 // ---------- Click-through ------------------------------------------------
 // The window is mostly transparent, so only the robot silhouette should
 // capture the mouse; everything else must fall through to the desktop.
@@ -222,6 +242,8 @@ const pointerAgent = new http.Agent({ keepAlive: true, maxSockets: 1 });
 
 /** Last region reported by the renderer: { polygon: number[], circles: [] }. */
 let hitRegion = null;
+/** True while the user is dragging the window (renderer-driven). */
+let dragging = false;
 /** Last value handed to setIgnoreMouseEvents (null = never applied yet). */
 let ignoringMouse = null;
 /**
@@ -366,9 +388,13 @@ function startClickThroughWatcher() {
       const p = await readPointerPosition();
       if (!p) return;
       const bounds = mainWindow.getBounds();
+      // While the user is dragging the window, never go click-through: the
+      // pointer must keep reaching us for the whole gesture.
+      if (dragging) {
+        applyIgnoreMouse(false, 'window drag');
       // Stay interactive until the renderer reports the silhouette, otherwise
       // a renderer hiccup would leave an unclickable window.
-      if (!CLICK_THROUGH_DISABLED && hitRegion && mainWindow.isVisible()) {
+      } else if (!CLICK_THROUGH_DISABLED && hitRegion && mainWindow.isVisible()) {
         const detail = `cursor ${p.x},${p.y} via ${pointerSource}`;
         if (!isOverPet(p.x, p.y, bounds)) {
           applyIgnoreMouse(true, detail);
@@ -678,11 +704,38 @@ app.whenReady().then(() => {
   // this, a move-then-click right on the edge is still captured by the window.
   ipcMain.on('pet:pointer-left', (_event, point) => {
     rendererLeftAt = Date.now();
+    // Ignore while dragging: the renderer's "cursor left the silhouette" is
+    // expected as the window follows the pointer, and must not end the drag.
+    if (dragging) return;
     if (CLICK_THROUGH_DISABLED || !hitRegion || !mainWindow || !mainWindow.isVisible()) return;
     const at = point && Number.isFinite(point.x) && Number.isFinite(point.y)
       ? ` ${Math.round(point.x)},${Math.round(point.y)}`
       : '';
     applyIgnoreMouse(true, `renderer: cursor off avatar${at}`);
+  });
+  // Window drag (option B). The renderer drives the position while dragging and
+  // asks for the live bounds to compute the grab offset.
+  ipcMain.on('pet:window-bounds', (event) => {
+    event.returnValue = mainWindow
+      ? mainWindow.getBounds()
+      : { x: 0, y: 0, width: 0, height: 0 };
+  });
+  ipcMain.on('pet:dragging', (_event, on) => {
+    const wasDragging = dragging;
+    dragging = !!on;
+    if (dragging) {
+      // Keep the window interactive for the whole gesture.
+      applyIgnoreMouse(false, 'window drag');
+    } else if (wasDragging && mainWindow) {
+      // Persist the new spot and never leave the pet stranded off-screen.
+      ensureOnScreen(mainWindow);
+      writeState(mainWindow);
+    }
+  });
+  ipcMain.on('pet:move', (_event, point) => {
+    if (!dragging || !mainWindow) return;
+    if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+    mainWindow.setPosition(Math.round(point.x), Math.round(point.y));
   });
   startClickThroughWatcher();
   ipcServer = createIpcServer(dispatcher);

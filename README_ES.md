@@ -134,6 +134,10 @@ La ventana es deliberadamente mínima, así que la mayor parte de la lógica del
 host en `src/main/main.js` consiste en mantener utilizable una superficie
 transparente, click-through y siempre encima:
 
+- **Arrastrar para mover**: agarra la mascota y muévela a cualquier parte de la
+  pantalla. Un pequeño umbral de movimiento mantiene funcionando los clics
+  normales (y deja pasar los gestos de la cabeza), y la posición se recuerda
+  entre arranques.
 - **Click-through**: solo la silueta del robot debe capturar el ratón; el resto
   deja pasar los clics al escritorio. El renderer muestrea el contorno SVG de la
   cabeza del avatar en un polígono (más un círculo para la antena) y lo reporta.
