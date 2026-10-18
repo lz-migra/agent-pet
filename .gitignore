@@ -36,3 +36,6 @@ coverage/
 .env
 .env.local
 .env.*.local
+
+# Local workspace state (OpenChamber project id)
+.freebuff/
