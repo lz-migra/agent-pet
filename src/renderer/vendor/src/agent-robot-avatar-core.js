@@ -1125,8 +1125,11 @@ const AgentRobotAvatar = (() => {
         this._raf = 0;
         return;
       }
-      if (ts - this._lastFrame >= 33) {
-        const dt = Math.min(66, ts - (this._lastFrame || ts-33));
+      // PATCH(agent-pet): upstream hard-codes a 33 ms gate (~30 fps). Honouring
+      // `_frameGateMs` lets the host opt into 60 fps via setFrameRate().
+      const frameGate = this._frameGateMs > 0 ? this._frameGateMs : 33;
+      if (ts - this._lastFrame >= frameGate) {
+        const dt = Math.min(66, ts - (this._lastFrame || ts-frameGate));
         this._lastFrame = ts;
         this._updateMorph(ts);
         this._updateBlink(ts);

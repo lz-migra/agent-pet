@@ -127,6 +127,17 @@ const actionHandlers = Object.fromEntries(BUILT_IN_ACTIONS.map(action => [
   function() { return playBuiltInAction.call(this, action); },
 ]));
 
+// PATCH(agent-pet): the upstream draw loop is gated at ~30 fps. Allow the host
+// to request a higher rate (the gate keeps a small tolerance so a 60 Hz vsync
+// does not drop every other frame to jitter).
+proto.setFrameRate = function(fps) {
+  const value = Number(fps);
+  this._frameGateMs = Number.isFinite(value) && value > 0
+    ? Math.max(1000 / 240, 1000 / value - 3)
+    : 33;
+  return this;
+};
+
 proto.setPointerFollow = function(enabled = true) {
   this._pointerFollowEnabled = enabled !== false;
   if (!this._pointerFollowEnabled) {

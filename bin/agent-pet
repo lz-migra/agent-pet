@@ -12,7 +12,7 @@ GUI="$HERE/resources/gui/agent-pet-gui"
 DISPATCHER="$HERE/agent-pet.js"
 
 FIRST="${1:-}"
-CLI_CMDS="init install play react reset list status show hide quit debug-hitbox devtools set-idle"
+CLI_CMDS="init install play react reset list status show hide quit debug-hitbox devtools set-idle set-fps"
 
 is_known_cli() {
   case "$1" in

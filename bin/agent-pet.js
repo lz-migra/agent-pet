@@ -91,7 +91,7 @@ const CLI_COMMANDS = new Set([
   'reset',
   'list', 'status',
   'show', 'hide',
-  'debug-hitbox', 'devtools', 'set-idle',
+  'debug-hitbox', 'devtools', 'set-idle', 'set-fps',
   'quit'
 ]);
 

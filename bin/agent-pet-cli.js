@@ -11,6 +11,12 @@
  *   show | hide       control window visibility
  *   quit              ask the GUI to exit
  *
+ * Debugging:
+ *   debug-hitbox      toggle the click-region overlay
+ *   devtools          toggle the renderer DevTools window
+ *   set-idle [ms]     show (no args) or set the idle sleep timeout;
+ *                     0 disables auto-sleep
+ *
  * Lifecycle / setup:
  *   (none) | init     start the GUI in the background if not running,
  *                      wait for it to be ready, and return when it's up.
@@ -185,28 +191,64 @@ function cleanStaleSingleton() {
   }
 }
 
+// GUI processes only: same binary as the CLI, but launched without
+// ELECTRON_RUN_AS_NODE. Matching by process name alone would also hit this
+// very CLI (the AppImage runs it via the agent-pet-gui binary), and
+// `pgrep -f` would match any shell whose command line mentions the name.
+function listGuiPids() {
+  const pids = [];
+  let entries = [];
+  try { entries = fs.readdirSync('/proc'); } catch (_) { return pids; }
+  for (const entry of entries) {
+    if (!/^\d+$/.test(entry)) continue;
+    const pid = Number(entry);
+    if (pid === process.pid) continue;
+    try {
+      if (path.basename(fs.readlinkSync('/proc/' + pid + '/exe')) !== 'agent-pet-gui') continue;
+      const env = fs.readFileSync('/proc/' + pid + '/environ', 'utf8');
+      if (env.includes('ELECTRON_RUN_AS_NODE')) continue;
+      pids.push(pid);
+    } catch (_) { /* gone or not ours */ }
+  }
+  return pids;
+}
+
 // Kill any orphaned GUI process whose socket is unresponsive.
-// Handles the case where `init` was aborted mid-launch and left a zombie.
-function killOrphanedGui() {
+// Handles the case where `init` was aborted mid-launch and left a zombie, or
+// the app was suspended with Ctrl+Z (SIGTSTP): a stopped process cannot act on
+// SIGTERM until it is resumed, so send SIGCONT first.
+function killOrphanedGui({ wait = false } = {}) {
   try {
-    // Find all agent-pet-gui processes except our own
-    const out = require('child_process').execSync(
-      "pgrep -f 'agent-pet-gui' | grep -v $$", { encoding: 'utf8' }
-    );
-    const pids = out.trim().split('\n').filter(Boolean);
+    const pids = listGuiPids();
     if (pids.length === 0) return 0;
 
-    // Try SIGTERM first, then SIGKILL if still alive
     for (const pid of pids) {
-      try { process.kill(Number(pid), 'SIGTERM'); } catch (_) {}
+      try { process.kill(pid, 'SIGCONT'); } catch (_) {}
+      try { process.kill(pid, 'SIGTERM'); } catch (_) {}
     }
-    // Give it a moment, then force-kill survivors
-    setTimeout(() => {
-      for (const pid of pids) {
-        try { process.kill(Number(pid), 'SIGKILL'); } catch (_) {}
-      }
-    }, 2000).unref();
 
+    const alive = () => pids.filter((pid) => {
+      try { process.kill(pid, 0); return true; } catch (_) { return false; }
+    });
+
+    if (!wait) {
+      // Give it a moment, then force-kill survivors
+      setTimeout(() => {
+        for (const pid of alive()) {
+          try { process.kill(pid, 'SIGKILL'); } catch (_) {}
+        }
+      }, 2000).unref();
+      return pids.length;
+    }
+
+    // Blocking wait (Node allows Atomics.wait on the main thread) so `quit`
+    // only returns once the window is really gone.
+    const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline && alive().length > 0) sleep(100);
+    for (const pid of alive()) {
+      try { process.kill(pid, 'SIGKILL'); } catch (_) {}
+    }
     return pids.length;
   } catch (_) {
     return 0;
@@ -277,9 +319,29 @@ function usage() {
     '  show | hide       toggle window visibility',
     '  quit              ask the GUI to exit',
     '',
+    'Debugging:',
+    '  debug-hitbox      toggle the click-region overlay',
+    '  devtools          toggle the renderer DevTools window',
+    '  set-idle [ms]     show (no args) or set the idle sleep timeout,',
+    '                    in milliseconds; 0 disables auto-sleep',
+    '  set-fps [fps]     show (no args) or set the render rate, 1-240;',
+    '                    default 60, use 30 to halve CPU usage',
+    '',
     'Lifecycle:',
     '  init              start the GUI in the background (idempotent)',
     '  (no command)      alias of `init`',
+    '',
+    'Configuration:',
+    '  AGENT_PET_GUI_BIN       path to the GUI binary (overrides discovery)',
+    '  AGENT_PET_EXTRA_ARGS    extra flags passed to the GUI at launch',
+    "                          (e.g. 'AGENT_PET_EXTRA_ARGS=--no-sandbox')",
+    '  AGENT_PET_IDLE_MS       idle timeout in ms; takes precedence over',
+    '                          set-idle until restart',
+    '  AGENT_PET_FRAME_RATE    render rate; takes precedence over set-fps',
+    '                          until restart (default 60)',
+    '  AGENT_PET_SOFTWARE_GPU  set to 1 to force software rendering (Linux)',
+    '  config.json             ~/.config/agent-pet/config.json caches the',
+    '                          discovered guiBin path',
     '',
     'Other:',
     '  -h, --help        show this message',
@@ -341,6 +403,7 @@ async function main() {
     case 'debug-hitbox':
     case 'devtools':
     case 'set-idle':
+    case 'set-fps':
     case 'quit':
       req = { id: String(Date.now()), cmd, args };
       break;
@@ -348,6 +411,29 @@ async function main() {
       process.stderr.write('unknown command: ' + cmd + '\n');
       usage();
       process.exit(2);
+  }
+
+  // `quit` must never launch a GUI just to close it, and it has to work even
+  // when the app cannot answer (e.g. suspended with Ctrl+Z).
+  if (cmd === 'quit') {
+    let answered = false;
+    if (await isGuiLikelyUp(300)) {
+      try {
+        await send(req, 2000);
+        answered = true;
+      } catch (_) { /* fall through to the process-level fallback */ }
+    }
+    if (answered) {
+      process.stdout.write('', () => process.exit(0));
+      return;
+    }
+    const killed = killOrphanedGui({ wait: true });
+    if (killed > 0) {
+      process.stdout.write('agent-pet: GUI did not answer; terminated ' + killed + ' process(es).\n', () => process.exit(0));
+    } else {
+      process.stdout.write('agent-pet: GUI is not running.\n', () => process.exit(0));
+    }
+    return;
   }
 
   if (!await isGuiLikelyUp(200)) {

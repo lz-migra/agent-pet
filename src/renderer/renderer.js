@@ -13,12 +13,60 @@
 // (play/reset/etc.) are on the prototype.
 await customElements.whenDefined('agent-robot-avatar');
 
+// The render rate is configurable (`agent-pet set-fps`); ask the main
+// process for the persisted value so a restart keeps the user's choice.
+let initialFrameRate = 60;
+try {
+  if (window.pet && typeof window.pet.getFrameRate === 'function') {
+    const configured = await window.pet.getFrameRate();
+    if (Number.isFinite(configured)) initialFrameRate = configured;
+  }
+} catch (_) {}
+
 const stage = document.getElementById('stage');
 const avatar = document.createElement('agent-robot-avatar');
 avatar.setAttribute('size', '240');
 avatar.setAttribute('color', '#08090b');
-try { avatar.setPointerFollow(false); } catch (_) {}
+// Let the eyes/head follow the cursor (the library supports it natively).
+try { avatar.setPointerFollow(true); } catch (_) {}
+// Upstream draws at ~30 fps; the pet runs at the configured rate instead.
+try {
+  avatar.setFrameRate(initialFrameRate);
+  console.log('[pet] render rate', initialFrameRate, 'fps');
+} catch (_) {}
 stage.appendChild(avatar);
+
+// --- Gaze / head follow ---------------------------------------------------
+// The component listens for `pointermove` on the window, but this window is
+// transparent and click-through, so real pointer events only arrive while the
+// cursor is over the robot. The main process forwards the global cursor
+// position (read from QueryPointerServer on Wayland); replaying it as a
+// window-level event keeps the built-in gaze/head follow working anywhere.
+if (window.pet && typeof window.pet.onPointer === 'function') {
+  let gazeConfirmed = false;
+  window.pet.onPointer((point) => {
+    if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+    const forwarded = new PointerEvent('pointermove', {
+      clientX: point.x,
+      clientY: point.y,
+      bubbles: true,
+      pointerType: 'mouse'
+    });
+    // Marked so the click-through fast path below only trusts real events:
+    // this one is a polled position and therefore lags the physical cursor.
+    forwarded.__forwardedPointer = true;
+    window.dispatchEvent(forwarded);
+    // One-time confirmation that the forwarded cursor actually reached the
+    // avatar's gaze/head follow (helps diagnose Wayland pointer problems).
+    if (!gazeConfirmed) {
+      const p = avatar._pointer;
+      if (p && p.active) {
+        gazeConfirmed = true;
+        console.log(`[pet] gaze follows the pointer (influence ${p.influence.toFixed(2)})`);
+      }
+    }
+  });
+}
 
 /**
  * Tracks the action currently being waited on. The component fires
@@ -89,6 +137,93 @@ function applyDebugStyle(head) {
   head.style.outlineOffset = debugHitbox ? '2px' : '';
 }
 
+// --- Click-through region -------------------------------------------------
+// The main process only keeps the window interactive where the robot is
+// actually drawn, so it needs the silhouette in window CSS pixels. Sample the
+// head path into a polygon; the transparent rest of the window then lets
+// clicks reach the desktop.
+let lastRegionJSON = '';
+/** Last silhouette sent to main, in window CSS pixels (for local hit tests). */
+let lastRegion = null;
+
+function computeHitRegion() {
+  const root = avatar.shadowRoot;
+  if (!root) return null;
+  const svg = root.querySelector('svg');
+  if (!svg) return null;
+  const path = root.querySelector('#headShape') || root.querySelector('#head path');
+  const head = root.querySelector('#head') || root.querySelector('svg use');
+
+  const toWindow = (el, x, y) => {
+    try {
+      const m = el.getScreenCTM();
+      if (m) {
+        const pt = new DOMPoint(x, y).matrixTransform(m);
+        if (Number.isFinite(pt.x) && Number.isFinite(pt.y)) return pt;
+      }
+    } catch (_) {}
+    return null;
+  };
+
+  const region = { polygon: [], circles: [] };
+
+  if (path && head && typeof path.getTotalLength === 'function') {
+    let total = 0;
+    try { total = path.getTotalLength(); } catch (_) { total = 0; }
+    if (total > 0) {
+      const steps = 128;
+      for (let i = 0; i < steps; i++) {
+        const p = path.getPointAtLength((i / steps) * total);
+        const w = toWindow(head, p.x, p.y);
+        // Half-pixel rounding keeps the payload stable while the idle
+        // animation wobbles the head a fraction of a pixel.
+        if (w) region.polygon.push(Math.round(w.x * 2) / 2, Math.round(w.y * 2) / 2);
+      }
+    }
+  }
+
+  // Fallback: the head's bounding box (better than the whole window).
+  if (region.polygon.length < 6 && head) {
+    const r = head.getBoundingClientRect();
+    region.polygon.push(r.left, r.top, r.right, r.top, r.right, r.bottom, r.left, r.bottom);
+  }
+
+  // The antenna dot lives outside the head path, so add it as a circle.
+  const dot = root.querySelector('#antennaDot');
+  if (dot && typeof dot.getScreenCTM === 'function') {
+    try {
+      const m = dot.getScreenCTM();
+      const cx = Number(dot.getAttribute('cx'));
+      const cy = Number(dot.getAttribute('cy'));
+      const radius = Number(dot.getAttribute('r'));
+      if (m && Number.isFinite(cx) && Number.isFinite(cy) && radius > 0) {
+        const center = new DOMPoint(cx, cy).matrixTransform(m);
+        const scale = Math.hypot(m.a, m.b) || 1;
+        region.circles.push({ x: center.x, y: center.y, r: radius * scale });
+      }
+    } catch (_) {}
+  }
+
+  return region.polygon.length >= 6 ? region : null;
+}
+
+function reportHitRegion() {
+  try {
+    const region = computeHitRegion();
+    if (!region) return;
+    const json = JSON.stringify(region);
+    if (json === lastRegionJSON) return;
+    lastRegionJSON = json;
+    lastRegion = region;
+    if (window.pet && typeof window.pet.setHitRegion === 'function') {
+      window.pet.setHitRegion(region);
+      console.log(`[pet] hit region: ${region.polygon.length / 2} points, ${region.circles.length} circles`);
+    }
+  } catch (err) {
+    console.error('[pet] could not compute the hit region:', err && err.message);
+  }
+}
+
 // Poll for the head element; re-attach if the shadow DOM re-renders.
 setInterval(() => {
   const head = getHeadElement();
@@ -97,6 +232,57 @@ setInterval(() => {
     applyDebugStyle(head);
   }
 }, 1000);
+
+// Keep the click-through region in sync with the (animating) avatar.
+requestAnimationFrame(reportHitRegion);
+setInterval(reportHitRegion, 200);
+
+// --- Fast click-through path ---------------------------------------------
+// Only the avatar silhouette should keep the window interactive. The main
+// process normally decides that from polled global-pointer samples, which lag
+// the physical cursor by one GNOME-extension tick plus the poll interval; a
+// fast move off the robot followed by a click therefore landed on the still
+// interactive window and was swallowed. While the window *is* interactive it
+// receives real pointer events, so we hit-test those (exact pixel, no lag) and
+// tell main to go click-through the moment the cursor leaves the silhouette.
+function pointInPolygon(x, y, flat) {
+  let inside = false;
+  for (let i = 0, j = flat.length - 2; i < flat.length; j = i, i += 2) {
+    const xi = flat[i], yi = flat[i + 1], xj = flat[j], yj = flat[j + 1];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+function isInsideSilhouette(region, x, y) {
+  if (!region) return false;
+  if (region.polygon.length >= 6 && pointInPolygon(x, y, region.polygon)) return true;
+  for (const c of region.circles || []) {
+    const dx = x - c.x, dy = y - c.y;
+    if (dx * dx + dy * dy <= c.r * c.r) return true;
+  }
+  return false;
+}
+
+function reportPointerOffAvatar(x, y) {
+  if (!window.pet || typeof window.pet.pointerLeft !== 'function') return;
+  window.pet.pointerLeft({ x: Math.round(x), y: Math.round(y) });
+}
+
+window.addEventListener('pointermove', (event) => {
+  if (event.__forwardedPointer) return;      // polled position, not real
+  if (event.pointerType && event.pointerType !== 'mouse') return;
+  if (!lastRegion) return;
+  if (!isInsideSilhouette(lastRegion, event.clientX, event.clientY)) {
+    reportPointerOffAvatar(event.clientX, event.clientY);
+  }
+}, { capture: true, passive: true });
+
+// The cursor leaving the window entirely is also "off the avatar"; this fires
+// when the pointer exits while the window is still interactive.
+window.addEventListener('pointerleave', () => {
+  reportPointerOffAvatar(-1, -1);
+}, { passive: true });
 
 window.__pet = {
   ready: true,
@@ -146,6 +332,28 @@ window.__pet = {
     if (typeof avatar.reset === 'function') avatar.reset();
     return true;
   },
+  /** Current silhouette in window CSS pixels (for debugging/automation). */
+  hitRegion() {
+    return computeHitRegion();
+  },
+
+  /** Apply a new render rate; returns the value the avatar accepted. */
+  setFrameRate(fps) {
+    const value = Number(fps);
+    if (!Number.isFinite(value) || value <= 0) {
+      throw new Error('setFrameRate: expected a positive number, got ' + fps);
+    }
+    avatar.setFrameRate(value);
+    console.log('[pet] frame rate ->', value, 'fps');
+    return value;
+  },
+
+  /** Last gaze target the avatar derived from the pointer (debugging). */
+  pointerState() {
+    const p = avatar._pointer;
+    return p ? { x: p.x, y: p.y, active: p.active, influence: p.influence } : null;
+  },
+
   toggleDebugHitbox() {
     debugHitbox = !debugHitbox;
     const head = getHeadElement();
