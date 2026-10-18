@@ -88,9 +88,73 @@ avatar.addEventListener('action-state', (event) => {
   }
 });
 
-// Allow dragging the window by grabbing anywhere on the avatar.
-document.body.addEventListener('mousedown', () => document.body.classList.add('dragging'));
-document.body.addEventListener('mouseup', () => document.body.classList.remove('dragging'));
+// --- Window drag (option B) ----------------------------------------------
+// Grab anywhere on the avatar and move the whole window. The window is
+// click-through everywhere except the silhouette, so a pointerdown here means
+// the user grabbed the pet. We only start moving after the pointer has
+// travelled a few pixels, so a plain click keeps its normal behaviour and the
+// avatar's own gestures (head squeeze, antenna drag, click reactions) still
+// work. The position is driven from the renderer via screenX/screenY, which is
+// also what makes it work under Wayland, where the global pointer is frozen.
+const DRAG_THRESHOLD_PX = 4;
+let dragState = null; // { pointerId, startScreenX, startScreenY, startWinX, startWinY, active }
+
+function dragSupported() {
+  return window.pet &&
+    typeof window.pet.moveTo === 'function' &&
+    typeof window.pet.getWindowBounds === 'function' &&
+    typeof window.pet.setDragging === 'function';
+}
+
+window.addEventListener('pointerdown', (event) => {
+  if (event.button !== 0) return;                        // left button only
+  if (event.pointerType && event.pointerType !== 'mouse') return;
+  if (!dragSupported()) return;
+  const b = window.pet.getWindowBounds();
+  dragState = {
+    pointerId: event.pointerId,
+    startScreenX: event.screenX,
+    startScreenY: event.screenY,
+    startWinX: b.x,
+    startWinY: b.y,
+    active: false
+  };
+}, { capture: true });
+
+window.addEventListener('pointermove', (event) => {
+  if (!dragState || event.pointerId !== dragState.pointerId) return;
+  const dx = event.screenX - dragState.startScreenX;
+  const dy = event.screenY - dragState.startScreenY;
+  if (!dragState.active) {
+    if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+    dragState.active = true;
+    // Take over the pointer and cancel the avatar's head drag so the two do not
+    // fight, and so releasing does not fire a drag reaction.
+    try { avatar.cancelDrag(); } catch (_) {}
+    try { document.body.setPointerCapture(event.pointerId); } catch (_) {}
+    document.body.classList.add('dragging');
+    if (window.pet.setDragging) window.pet.setDragging(true);
+  }
+  window.pet.moveTo(
+    Math.round(dragState.startWinX + dx),
+    Math.round(dragState.startWinY + dy)
+  );
+}, { capture: true });
+
+function endWindowDrag(event) {
+  if (!dragState) return;
+  if (event && event.pointerId !== dragState.pointerId) return;
+  const pointerId = dragState.pointerId;
+  const wasActive = dragState.active;
+  dragState = null;
+  if (!wasActive) return;
+  document.body.classList.remove('dragging');
+  try { document.body.releasePointerCapture(pointerId); } catch (_) {}
+  if (window.pet.setDragging) window.pet.setDragging(false);
+}
+
+window.addEventListener('pointerup', endWindowDrag, { capture: true });
+window.addEventListener('pointercancel', endWindowDrag, { capture: true });
 
 // Wake on hover: listen directly on the avatar's shadow DOM #head element
 // (the visible head shape). This avoids an external hitbox entirely.

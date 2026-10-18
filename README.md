@@ -133,6 +133,9 @@ The window is intentionally minimal, so most of the host logic in
 `src/main/main.js` is about keeping a transparent, click-through,
 always-on-top surface usable:
 
+- **Drag to move**: grab the pet and drag it anywhere on screen. A small
+  movement threshold keeps plain clicks working (and lets the avatar's own head
+  gestures through), and the position is remembered between launches.
 - **Click-through**: only the robot silhouette should capture the mouse;
   everything else lets clicks reach the desktop. The renderer samples the
   avatar's SVG head outline into a polygon (plus a circle for the antenna)

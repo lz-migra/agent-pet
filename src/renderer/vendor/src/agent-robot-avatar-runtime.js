@@ -668,6 +668,15 @@ proto._finishDragReturn = function(reaction) {
   finishDragReturn(this, reaction);
 };
 
+// PATCH(agent-pet): let the host cancel an in-progress head drag when it takes
+// over the pointer to move the whole window instead. Clears the jelly without
+// firing a drag reaction, and suppresses the click that would otherwise follow.
+proto.cancelDrag = function() {
+  if (!this._dragJelly) return this;
+  clearDragGeometry(this, { preserveClick: true, releaseCapture: true });
+  return this;
+};
+
 proto._resumeFrames = function() {
   if (!this.isConnected || this._runtimeDisconnecting) return;
   ensureRuntime(this);
